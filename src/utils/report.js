@@ -28,6 +28,33 @@ function toDateStr(year, month, day) {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
+/** Ertangi kun: "2026-09-01" -> "2026-09-02" */
+function nextDay(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + 1);
+  return toDateStr(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+}
+
+/** Server vaqtidagi "hozir": { date: "YYYY-MM-DD", time: "HH:MM" } */
+function nowParts() {
+  const d = new Date();
+  return {
+    date: toDateStr(d.getFullYear(), d.getMonth() + 1, d.getDate()),
+    time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+  };
+}
+
+/**
+ * (sana, vaqt) juftligi hozirgi vaqtdan keyinmi?
+ * Matnli taqqoslash ishlatiladi — "YYYY-MM-DD" ham, "HH:MM" ham leksikografik
+ * tartibda xronologik tartib bilan bir xil.
+ */
+function isFutureMoment(date, time, now = nowParts()) {
+  if (date > now.date) return true;
+  if (date < now.date) return false;
+  return time > now.time;
+}
+
 /** ISO hafta kuni: 1 = Dushanba ... 7 = Yakshanba */
 function isoWeekday(year, month, day) {
   const wd = new Date(year, month - 1, day).getDay(); // 0 = Yakshanba
@@ -254,6 +281,9 @@ async function buildMonthlyReport(year, month, { employeeId, includeInactive = t
 
 module.exports = {
   OPEN_SESSION_MAX_MINUTES,
+  nextDay,
+  nowParts,
+  isFutureMoment,
   timeToMinutes,
   minutesToTime,
   daysInMonth,

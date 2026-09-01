@@ -85,4 +85,18 @@ app.use(errorHandler);
 app.listen(PORT, () => {
   console.log(`✔ Server ishga tushdi: port ${PORT}`);
   console.log(`  Ruxsat etilgan manzillar (CORS): ${origins.join(', ')}`);
+
+  // Vaqt mintaqasi ikkita narsaga ta'sir qiladi: (1) hali tugallanmagan
+  // seanslarning joriy vaqtgacha hisoblanishi, (2) kelajakdagi vaqtni rad etish.
+  if (process.env.TZ) {
+    const now = new Date();
+    console.log(`  Vaqt mintaqasi (TZ): ${process.env.TZ} — hozir ${now.toLocaleString('en-GB')}`);
+  } else {
+    console.warn(
+      '  ⚠ TZ o\'zgaruvchisi qo\'yilmagan — server UTC\'da ishlayapti.\n' +
+        '    • tugallanmagan seanslar noto\'g\'ri hisoblanishi mumkin\n' +
+        '    • kelajakdagi vaqt serverda TEKSHIRILMAYDI (faqat brauzerda)\n' +
+        '    Tuzatish: TZ="Asia/Ashgabat"'
+    );
+  }
 });

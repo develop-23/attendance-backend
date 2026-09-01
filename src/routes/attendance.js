@@ -16,6 +16,9 @@ const {
   workedMinutes,
   toInterval,
   intervalsOverlap,
+  nowParts,
+  nextDay,
+  isFutureMoment,
 } = require('../utils/report');
 
 const router = express.Router();
@@ -23,10 +26,42 @@ router.use(authRequired);
 
 /** Bugungi sana YYYY-MM-DD */
 function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate()
-  ).padStart(2, '0')}`;
+  return nowParts().date;
+}
+
+// Kelajakdagi VAQTni serverda tekshirish uchun server soati foydalanuvchi bilan
+// bir vaqt mintaqasida bo'lishi shart. TZ qo'yilmagan bo'lsa (Railway'da
+// standart holat — UTC), server soati foydalanuvchinikidan farq qiladi va
+// to'g'ri yozuvlarni ham rad etib qo'yishi mumkin. Shuning uchun bu tekshiruv
+// faqat TZ aniq berilgan bo'lsa ishlaydi; brauzer tomonida esa doim ishlaydi.
+const TIMEZONE_CONFIGURED = Boolean(process.env.TZ);
+
+/**
+ * Kelish/ketish vaqti kelajakda emasligini tekshiradi.
+ * Tungi smenada (checkOut < checkIn) ketish vaqti ERTANGI kunga tegishli
+ * bo'ladi — demak u ham kelajakda bo'lishi mumkin.
+ */
+function assertNotInFuture({ date, checkIn, checkOut }) {
+  if (!TIMEZONE_CONFIGURED) return;
+  const now = nowParts();
+
+  if (checkIn && isFutureMoment(date, checkIn, now)) {
+    throw new AppError(400, '"Geldi" wagty geljekde bolup bilmez.');
+  }
+
+  if (checkOut) {
+    // checkOut <= checkIn bo'lsa — bu tungi smena, ketish ertangi kunda
+    const overnight = checkIn && checkOut <= checkIn;
+    const outDate = overnight ? nextDay(date) : date;
+    if (isFutureMoment(outDate, checkOut, now)) {
+      throw new AppError(
+        400,
+        overnight
+          ? '"Gitdi" wagty geljekde bolup bilmez (bu wagt ertirki güne degişli).'
+          : '"Gitdi" wagty geljekde bolup bilmez.'
+      );
+    }
+  }
 }
 
 /** Aktyor shu yozuvni tahrirlay oladimi? */
@@ -116,6 +151,11 @@ router.post(
     }
 
     assertValidDate(data.date);
+    assertNotInFuture({
+      date: data.date,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut ?? null,
+    });
     await assertNoOverlap({
       employeeId,
       date: data.date,
@@ -170,6 +210,7 @@ router.put(
     const checkIn = data.checkIn ?? old.checkIn;
     const checkOut = data.checkOut !== undefined ? data.checkOut : old.checkOut;
 
+    assertNotInFuture({ date: old.date, checkIn, checkOut });
     await assertNoOverlap({
       employeeId: old.employeeId,
       date: old.date,
