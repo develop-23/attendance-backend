@@ -53,7 +53,28 @@ async function main() {
 main()
   .then(() => prisma.$disconnect())
   .catch(async (e) => {
-    console.error('Seed xatosi:', e);
+    const msg = String(e?.message || e);
+
+    // Eng ko'p uchraydigan chalg'ituvchi xato: schema.prisma o'zgargan, lekin
+    // yaratilgan Prisma klienti eski provider bilan qolib ketgan.
+    if (/must start with the protocol/i.test(msg)) {
+      console.error('\n✖ Prisma klienti sxemaga mos emas (eskirgan).');
+      console.error('  schema.prisma dagi provider o\'zgargan, lekin klient qayta yaratilmagan.');
+      console.error('\n  Yechim:');
+      console.error('    npm run generate');
+      console.error('    npm run seed\n');
+    } else if (/Environment variable not found: DATABASE_URL/i.test(msg)) {
+      console.error('\n✖ DATABASE_URL aniqlanmagan.');
+      console.error('  Yechim:  cp .env.example .env  va DATABASE_URL ni to\'ldiring.\n');
+    } else if (/P1001|Can't reach database server/i.test(msg)) {
+      console.error('\n✖ Ma\'lumotlar bazasiga ulanib bo\'lmadi.');
+      console.error('  DATABASE_URL to\'g\'rimi va baza ishlab turibdimi — tekshiring.');
+      console.error('  Railway ichki manzili (*.railway.internal) lokal mashinadan ishlamaydi —');
+      console.error('  DATABASE_PUBLIC_URL dan foydalaning.\n');
+    } else {
+      console.error('Seed xatosi:', e);
+    }
+
     await prisma.$disconnect();
     process.exit(1);
   });

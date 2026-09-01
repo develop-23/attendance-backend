@@ -23,6 +23,20 @@ const publicFields = {
   createdAt: true,
 };
 
+// Ro'yxat uchun: har bir xodimning nechta davomat yozuvi borligi ham qaytadi.
+// Bu butunlay o'chirishdan oldin ogohlantirish ko'rsatish uchun kerak.
+const publicFieldsWithCount = {
+  ...publicFields,
+  _count: { select: { attendances: true } },
+};
+
+/** Prisma'ning _count ni oddiy `attendanceCount` maydoniga aylantiradi */
+function withCount(employee) {
+  if (!employee) return employee;
+  const { _count, ...rest } = employee;
+  return { ...rest, attendanceCount: _count?.attendances ?? 0 };
+}
+
 // GET /api/employees?search=&includeInactive=true
 // Xodim ham chaqira oladi, lekin faqat o'zini ko'radi.
 router.get(
@@ -48,11 +62,11 @@ router.get(
 
     const employees = await prisma.employee.findMany({
       where,
-      select: publicFields,
+      select: publicFieldsWithCount,
       orderBy: [{ isActive: 'desc' }, { fullName: 'asc' }],
     });
 
-    res.json({ employees });
+    res.json({ employees: employees.map(withCount) });
   })
 );
 
@@ -124,7 +138,13 @@ router.put(
   })
 );
 
-// DELETE /api/employees/:id  (faqat admin, soft delete)
+// DELETE /api/employees/:id                 → arxivga (soft delete)
+// DELETE /api/employees/:id?permanent=true   → BUTUNLAY o'chirish
+//
+// ⚠ Butunlay o'chirishda xodimning BARCHA davomat yozuvlari ham o'chadi
+// (schema.prisma: Attendance.employee → onDelete: Cascade). Bu amalni
+// qaytarib bo'lmaydi, shuning uchun o'tgan oylardagi hisobotlar ham o'zgaradi.
+// AuditLog'da esa nima o'chirilgani (ism, login, yozuvlar soni) saqlanib qoladi.
 router.delete(
   '/:id',
   adminOnly,
@@ -132,15 +152,45 @@ router.delete(
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) throw new AppError(400, 'Nädogry işgär ID-si.');
 
-    const old = await prisma.employee.findUnique({ where: { id }, select: publicFields });
+    const permanent = req.query.permanent === 'true' || req.query.permanent === '1';
+
+    const old = await prisma.employee.findUnique({
+      where: { id },
+      select: publicFieldsWithCount,
+    });
     if (!old) throw new AppError(404, 'Işgär tapylmady.');
+
+    const employee = withCount(old);
+
+    // ── Butunlay o'chirish ──────────────────────────────────────────
+    if (permanent) {
+      await prisma.employee.delete({ where: { id } });
+
+      await writeAudit({
+        actor: req.actor,
+        action: 'delete',
+        entity: 'Employee',
+        entityId: id,
+        oldValue: employee, // yozuvlar soni bilan birga saqlanadi
+      });
+
+      return res.json({
+        deleted: true,
+        attendanceCount: employee.attendanceCount,
+        message:
+          employee.attendanceCount > 0
+            ? `Işgär we onuň ${employee.attendanceCount} sany gatnaşyk ýazgysy hemişelik pozuldy.`
+            : 'Işgär hemişelik pozuldy.',
+      });
+    }
+
+    // ── Arxivga o'tkazish ───────────────────────────────────────────
     if (!old.isActive) throw new AppError(400, 'Bu işgär eýýäm işjeň däl.');
 
-    // Soft delete — davomat tarixi saqlanib qoladi, lekin xodim kirolmaydi
-    const employee = await prisma.employee.update({
+    const updated = await prisma.employee.update({
       where: { id },
       data: { isActive: false },
-      select: publicFields,
+      select: publicFieldsWithCount,
     });
 
     await writeAudit({
@@ -148,11 +198,11 @@ router.delete(
       action: 'soft-delete',
       entity: 'Employee',
       entityId: id,
-      oldValue: old,
-      newValue: employee,
+      oldValue: employee,
+      newValue: withCount(updated),
     });
 
-    res.json({ employee, message: 'Işgär arhiwe geçirildi.' });
+    res.json({ employee: withCount(updated), message: 'Işgär arhiwe geçirildi.' });
   })
 );
 

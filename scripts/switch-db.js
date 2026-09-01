@@ -9,6 +9,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const target = (process.argv[2] || '').toLowerCase();
 const allowed = ['sqlite', 'postgresql'];
@@ -34,6 +35,23 @@ const migrationsDir = path.join(prismaDir, 'migrations');
 if (fs.existsSync(migrationsDir)) {
   fs.rmSync(migrationsDir, { recursive: true, force: true });
   console.log('✔ prisma/migrations papkasi o\'chirildi (boshqa provider uchun edi).');
+}
+
+// Prisma klientini QAYTA YARATAMIZ.
+// Bu majburiy: yaratilgan klient ichida provider "muhrlangan" bo'ladi va
+// schema.prisma o'zgargani bilan u eski provider'da qolib ketadi. Natijada
+// "the URL must start with the protocol `file:`" kabi chalg'ituvchi xato chiqadi.
+// `prisma generate` bazaga ulanmaydi, shuning uchun DATABASE_URL to'g'ri
+// bo'lmasa ham muvaffaqiyatli bajariladi.
+try {
+  console.log('\n⏳ Prisma klienti qayta yaratilyapti…');
+  execFileSync('npx', ['prisma', 'generate'], {
+    cwd: path.join(__dirname, '..'),
+    stdio: ['ignore', 'ignore', 'inherit'],
+  });
+  console.log('✔ Prisma klienti yangilandi.');
+} catch {
+  console.warn('⚠  Prisma klientini yaratib bo\'lmadi. Qo\'lda bajaring:  npm run generate');
 }
 
 console.log('\nKeyingi qadamlar:');
