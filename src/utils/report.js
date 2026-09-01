@@ -34,14 +34,52 @@ function isoWeekday(year, month, day) {
   return wd === 0 ? 7 : wd;
 }
 
-/** Bitta seansda ishlangan vaqt (minut). Tunda tugasa keyingi kunga o'tadi. */
-function workedMinutes(checkIn, checkOut) {
+/** Ochiq seans uchun eng ko'p hisoblanadigan vaqt (24 soat) */
+const OPEN_SESSION_MAX_MINUTES = 24 * 60;
+
+/**
+ * Bitta seansda ishlangan vaqt (minut).
+ *
+ * - "Gitdi" yozilgan bo'lsa — oddiy ayirma (tungi smena hisobga olinadi).
+ * - "Gitdi" hali yozilmagan bo'lsa — JORIY VAQTgacha hisoblanadi, ya'ni
+ *   xodim hozir ishlab turgan bo'lsa ham soati ko'rinadi.
+ *
+ * 24 soat chegarasi: kimdir "Gitdi" ni yozishni unutib qo'ysa, o'tgan
+ * haftadagi ochiq seans 200+ soatga aylanib hisobotlarni buzib yuborardi.
+ *
+ * ⚠ Server vaqt mintaqasi muhim: `TZ` o'zgaruvchisi qo'yilmasa, Railway
+ * UTC'da ishlaydi va ochiq seanslar noto'g'ri (odatda 0) hisoblanadi.
+ * .env.example ga qarang.
+ *
+ * @param {string} checkIn
+ * @param {string|null} checkOut
+ * @param {{date?: string, now?: number}} [options]
+ */
+function workedMinutes(checkIn, checkOut, options = {}) {
   const inM = timeToMinutes(checkIn);
-  const outM = timeToMinutes(checkOut);
-  if (inM == null || outM == null) return 0;
-  let diff = outM - inM;
-  if (diff < 0) diff += 24 * 60; // tungi smena
-  return diff;
+  if (inM == null) return 0;
+
+  // Tugallangan seans
+  if (checkOut) {
+    const outM = timeToMinutes(checkOut);
+    if (outM == null) return 0;
+    let diff = outM - inM;
+    if (diff < 0) diff += 24 * 60; // tungi smena
+    return diff;
+  }
+
+  // Ochiq seans — joriy vaqtgacha
+  const { date, now } = options;
+  if (!date || now == null) return 0;
+
+  const [y, mo, d] = date.split('-').map(Number);
+  if (!y || !mo || !d) return 0;
+
+  const start = new Date(y, mo - 1, d, Math.floor(inM / 60), inM % 60, 0, 0).getTime();
+  const elapsed = Math.floor((now - start) / 60000);
+
+  if (elapsed < 0 || elapsed > OPEN_SESSION_MAX_MINUTES) return 0;
+  return elapsed;
 }
 
 /**
@@ -95,9 +133,11 @@ async function getSettings() {
 
 /**
  * Seanslarni kunlar bo'yicha guruhlab, kunlik yig'indini hisoblaydi.
+ * @param {Array} records
+ * @param {number} [now] - ochiq seanslarni hisoblash uchun (Date.now())
  * @returns Map<"employeeId|date", {sessions, minutes, firstCheckIn, hasOpen}>
  */
-function groupByDay(records) {
+function groupByDay(records, now = Date.now()) {
   const map = new Map();
   for (const r of records) {
     const key = `${r.employeeId}|${r.date}`;
@@ -107,7 +147,7 @@ function groupByDay(records) {
       map.set(key, day);
     }
     day.sessions.push(r);
-    day.minutes += workedMinutes(r.checkIn, r.checkOut);
+    day.minutes += workedMinutes(r.checkIn, r.checkOut, { date: r.date, now });
     if (!r.checkOut) day.hasOpen = true;
     if (!day.firstCheckIn || r.checkIn < day.firstCheckIn) day.firstCheckIn = r.checkIn;
   }
@@ -171,7 +211,8 @@ async function buildMonthlyReport(year, month, { employeeId, includeInactive = t
     });
   }
 
-  const byDay = groupByDay(records);
+  const now = Date.now();
+  const byDay = groupByDay(records, now);
 
   // Har bir xodim bo'yicha yig'indi
   const summary = employees.map((emp) => {
@@ -212,6 +253,7 @@ async function buildMonthlyReport(year, month, { employeeId, includeInactive = t
 }
 
 module.exports = {
+  OPEN_SESSION_MAX_MINUTES,
   timeToMinutes,
   minutesToTime,
   daysInMonth,

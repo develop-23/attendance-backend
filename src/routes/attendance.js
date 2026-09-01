@@ -145,7 +145,10 @@ router.post(
 
     res.status(201).json({
       record,
-      workedMinutes: workedMinutes(record.checkIn, record.checkOut),
+      workedMinutes: workedMinutes(record.checkIn, record.checkOut, {
+        date: record.date,
+        now: Date.now(),
+      }),
     });
   })
 );
@@ -195,7 +198,13 @@ router.put(
       newValue: record,
     });
 
-    res.json({ record, workedMinutes: workedMinutes(record.checkIn, record.checkOut) });
+    res.json({
+      record,
+      workedMinutes: workedMinutes(record.checkIn, record.checkOut, {
+        date: record.date,
+        now: Date.now(),
+      }),
+    });
   })
 );
 

@@ -61,7 +61,8 @@ router.get(
     const report = await buildMonthlyReport(year, month, scopeFor(req));
     const { days, employees, records, settings, summary } = report;
 
-    const byDay = groupByDay(records);
+    const now = Date.now();
+    const byDay = groupByDay(records, now);
     const summaryMap = new Map(summary.map((s) => [s.employeeId, s]));
 
     const wb = new ExcelJS.Workbook();
@@ -196,13 +197,16 @@ router.get(
       const emp = empMap.get(r.employeeId);
       if (!emp) continue;
       const d = dayMap.get(r.date);
+      // Ochiq seans ham hisoblanadi (joriy vaqtgacha) — eksport qilingan
+      // paytdagi holatni ko'rsatadi
+      const mins = workedMinutes(r.checkIn, r.checkOut, { date: r.date, now });
       ws3.addRow([
         emp.fullName,
         r.date,
         d ? WEEKDAYS_TK[d.weekday - 1] : '',
         r.checkIn,
         r.checkOut || '',
-        r.checkOut ? minutesToTime(workedMinutes(r.checkIn, r.checkOut)) : '',
+        mins > 0 ? minutesToTime(mins) : '',
         r.note || '',
       ]);
     }
