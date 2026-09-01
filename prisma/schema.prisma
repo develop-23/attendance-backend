@@ -1,0 +1,99 @@
+// Prisma sxemasi — xodimlar davomati
+// Provider ni almashtirish uchun: npm run use:sqlite / npm run use:postgres
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Administratorlar. Tizimda faqat shu turdagi "user" bor —
+/// xodimlar alohida Employee jadvalida o'z hisobiga ega bo'ladi.
+model User {
+  id           Int      @id @default(autoincrement())
+  login        String   @unique
+  passwordHash String
+  fullName     String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  attendanceUpdates Attendance[] @relation("AttendanceUpdatedByUser")
+  auditLogs         AuditLog[]
+}
+
+/// Xodimlar. Har biri o'z login/paroli bilan tizimga kirib,
+/// o'z kelish-ketish vaqtlarini kiritadi.
+model Employee {
+  id           Int      @id @default(autoincrement())
+  login        String   @unique
+  passwordHash String
+  fullName     String
+  position     String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  attendances       Attendance[]
+  attendanceUpdates Attendance[] @relation("AttendanceUpdatedByEmployee")
+  auditLogs         AuditLog[]
+
+  @@index([isActive])
+  @@index([fullName])
+}
+
+/// BITTA kelish-ketish seansi.
+/// Xodim bir kunda bir necha marta kelib-ketishi mumkin, shuning uchun
+/// (employeeId, date) bo'yicha unique index YO'Q — bir kunga bir nechta yozuv.
+/// date "YYYY-MM-DD", checkIn/checkOut "HH:MM" ko'rinishida matn sifatida
+/// saqlanadi — bu SQLite va PostgreSQL da bir xil ishlaydi hamda vaqt mintaqasi
+/// tufayli kun siljib ketish muammosini yo'q qiladi.
+model Attendance {
+  id                  Int      @id @default(autoincrement())
+  employeeId          Int
+  date                String // YYYY-MM-DD
+  checkIn             String // HH:MM — seans boshlanishi, majburiy
+  checkOut            String? // HH:MM — hali ketmagan bo'lsa null
+  note                String?
+  updatedByUserId     Int? // admin tahrirlagan bo'lsa
+  updatedByEmployeeId Int? // xodimning o'zi kiritgan bo'lsa
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  employee          Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  updatedByUser     User?     @relation("AttendanceUpdatedByUser", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  updatedByEmployee Employee? @relation("AttendanceUpdatedByEmployee", fields: [updatedByEmployeeId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, date])
+  @@index([date])
+}
+
+/// O'zgarishlar tarixi. Amalni admin ham, xodim ham bajarishi mumkin.
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int? // admin
+  employeeId Int? // xodim
+  action     String // create | update | delete | login | change-password
+  entity     String // Employee | Attendance | User | Settings
+  entityId   String?
+  oldValue   String? // JSON matn
+  newValue   String? // JSON matn
+  createdAt  DateTime @default(now())
+
+  user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+/// Umumiy sozlamalar (bitta yozuvli jadval, id = 1)
+model Settings {
+  id               Int      @id @default(1)
+  workStart        String   @default("09:00") // ish boshlanish vaqti
+  workEnd          String   @default("18:00") // ish tugash vaqti
+  lateThresholdMin Int      @default(0) // kechikish chegarasi (minut)
+  weekendDays      String   @default("6,7") // 1=Dushanba ... 7=Yakshanba
+  updatedAt        DateTime @updatedAt
+}
