@@ -1,4 +1,4 @@
-// Prisma klientining yagona nusxasi (singleton)
+// Single instance of the Prisma client (singleton)
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient({

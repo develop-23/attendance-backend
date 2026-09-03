@@ -1,14 +1,14 @@
-// Hisoblar bilan bog'liq umumiy yordamchilar.
-// Admin (User) va xodim (Employee) bitta login maydonini bo'lishadi —
-// ikkalasi ham bitta /api/auth/login orqali kiradi, shuning uchun login
-// IKKALA jadval bo'ylab takrorlanmasligi kerak.
+// Shared helpers for accounts.
+// An admin (User) and an employee (Employee) share the same login namespace —
+// both sign in through the same /api/auth/login, so a login must be unique
+// across BOTH tables.
 const prisma = require('../prisma');
 const { AppError } = require('../middleware/error');
 
 /**
- * Login bandmi yoki yo'qligini tekshiradi.
+ * Checks whether the login is already taken.
  * @param {string} login
- * @param {{type: 'admin'|'employee', id: number}} [except] - tahrirlanayotgan hisob
+ * @param {{type: 'admin'|'employee', id: number}} [except] - the account being edited
  */
 async function assertLoginAvailable(login, except) {
   const [user, employee] = await Promise.all([

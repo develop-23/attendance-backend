@@ -1,4 +1,4 @@
-// /api/settings — ish vaqti va dam olish kunlari sozlamalari
+// /api/settings — working hours and weekend day settings
 const express = require('express');
 const prisma = require('../prisma');
 const { asyncHandler, AppError } = require('../middleware/error');
@@ -10,7 +10,7 @@ const { getSettings, timeToMinutes } = require('../utils/report');
 const router = express.Router();
 router.use(authRequired);
 
-// GET /api/settings — admin ham, xodim ham o'qiy oladi (kechikish chegarasini bilishi uchun)
+// GET /api/settings — both admins and employees can read it (so they know the lateness threshold)
 router.get(
   '/',
   asyncHandler(async (req, res) => {
@@ -18,7 +18,7 @@ router.get(
   })
 );
 
-// PUT /api/settings — faqat admin
+// PUT /api/settings — admin only
 router.put(
   '/',
   adminOnly,

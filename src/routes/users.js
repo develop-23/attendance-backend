@@ -1,6 +1,6 @@
-// /api/users — administratorlar boshqaruvi (faqat admin).
-// Tizimda faqat bitta turdagi "user" bor — administrator.
-// Xodimlar alohida /api/employees orqali boshqariladi.
+// /api/users — administrator management (admin only).
+// The system has only one kind of "user" — the administrator.
+// Employees are managed separately through /api/employees.
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const prisma = require('../prisma');
@@ -72,12 +72,12 @@ router.put(
     const old = await prisma.user.findUnique({ where: { id }, select: publicFields });
     if (!old) throw new AppError(404, 'Ulanyjy tapylmady.');
 
-    // Admin o'z hisobini to'xtatib qo'ymasligi kerak
+    // An admin must not deactivate their own account
     if (id === req.actor.id && data.isActive === false) {
       throw new AppError(400, 'Öz hasabyňyzy togtadyp bilmeýärsiňiz.');
     }
 
-    // Tizimda kamida bitta faol administrator qolishi shart
+    // At least one active administrator has to remain in the system
     if (data.isActive === false && old.isActive) {
       const activeAdmins = await prisma.user.count({ where: { isActive: true } });
       if (activeAdmins <= 1) {

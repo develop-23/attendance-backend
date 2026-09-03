@@ -1,11 +1,11 @@
 /**
- * schema.prisma faylidagi datasource provider ni almashtiradi.
- * Ishlatilishi:  node scripts/switch-db.js sqlite
- *                node scripts/switch-db.js postgresql
+ * Switches the datasource provider in the schema.prisma file.
+ * Usage:  node scripts/switch-db.js sqlite
+ *         node scripts/switch-db.js postgresql
  *
- * Prisma migratsiyalari provider'ga bog'liq bo'lgani uchun (migration_lock.toml),
- * provider almashganda eski migratsiyalar papkasi ham o'chiriladi — aks holda
- * Prisma P3019 xatosini beradi.
+ * Because Prisma migrations depend on the provider (migration_lock.toml), the
+ * old migrations folder is deleted as well when the provider changes —
+ * otherwise Prisma raises error P3019.
  */
 const fs = require('fs');
 const path = require('path');
@@ -15,7 +15,7 @@ const target = (process.argv[2] || '').toLowerCase();
 const allowed = ['sqlite', 'postgresql'];
 
 if (!allowed.includes(target)) {
-  console.error(`Xato: provider "${allowed.join('" yoki "')}" bo'lishi kerak.`);
+  console.error(`Error: the provider must be "${allowed.join('" or "')}".`);
   process.exit(1);
 }
 
@@ -28,37 +28,37 @@ fs.writeFileSync(
   schemaPath,
   schema.replace(/provider\s*=\s*"(postgresql|sqlite)"/, `provider = "${target}"`)
 );
-console.log(`✔ schema.prisma provider = "${target}" ga o'zgartirildi.`);
+console.log(`✔ schema.prisma provider changed to "${target}".`);
 
-// Eski migratsiyalar boshqa provider uchun yozilgan — ular endi yaroqsiz
+// The old migrations were written for a different provider — they are no longer valid
 const migrationsDir = path.join(prismaDir, 'migrations');
 if (fs.existsSync(migrationsDir)) {
   fs.rmSync(migrationsDir, { recursive: true, force: true });
-  console.log('✔ prisma/migrations papkasi o\'chirildi (boshqa provider uchun edi).');
+  console.log('✔ The prisma/migrations folder was removed (it belonged to the other provider).');
 }
 
-// Prisma klientini QAYTA YARATAMIZ.
-// Bu majburiy: yaratilgan klient ichida provider "muhrlangan" bo'ladi va
-// schema.prisma o'zgargani bilan u eski provider'da qolib ketadi. Natijada
-// "the URL must start with the protocol `file:`" kabi chalg'ituvchi xato chiqadi.
-// `prisma generate` bazaga ulanmaydi, shuning uchun DATABASE_URL to'g'ri
-// bo'lmasa ham muvaffaqiyatli bajariladi.
+// REGENERATE the Prisma client.
+// This is mandatory: the provider is "baked into" the generated client, so even
+// after schema.prisma changes the client stays on the old provider. The result
+// is the misleading error "the URL must start with the protocol `file:`".
+// `prisma generate` does not connect to the database, so it succeeds even when
+// DATABASE_URL is not correct.
 try {
-  console.log('\n⏳ Prisma klienti qayta yaratilyapti…');
+  console.log('\n⏳ Regenerating the Prisma client…');
   execFileSync('npx', ['prisma', 'generate'], {
     cwd: path.join(__dirname, '..'),
     stdio: ['ignore', 'ignore', 'inherit'],
   });
-  console.log('✔ Prisma klienti yangilandi.');
+  console.log('✔ The Prisma client was updated.');
 } catch {
-  console.warn('⚠  Prisma klientini yaratib bo\'lmadi. Qo\'lda bajaring:  npm run generate');
+  console.warn('⚠  Could not generate the Prisma client. Do it by hand:  npm run generate');
 }
 
-console.log('\nKeyingi qadamlar:');
+console.log('\nNext steps:');
 if (target === 'sqlite') {
-  console.log('  1) .env da:  DATABASE_URL="file:./dev.db"');
+  console.log('  1) In .env:  DATABASE_URL="file:./dev.db"');
 } else {
-  console.log('  1) .env da:  DATABASE_URL="postgresql://user:parol@localhost:5432/davomat?schema=public"');
+  console.log('  1) In .env:  DATABASE_URL="postgresql://user:password@localhost:5432/attendance?schema=public"');
 }
 console.log('  2) npm run migrate');
 console.log('  3) npm run seed');

@@ -1,11 +1,11 @@
-// JWT tokenni tekshirish. Tizimda ikki xil "aktyor" bor:
-//   type = 'admin'    -> User jadvalidagi administrator
-//   type = 'employee' -> Employee jadvalidagi xodim (o'z vaqtini kiritadi)
+// Verify the JWT token. The system has two kinds of "actor":
+//   type = 'admin'    -> an administrator from the User table
+//   type = 'employee' -> an employee from the Employee table (enters their own times)
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma');
 const { AppError, asyncHandler } = require('./error');
 
-/** Token majburiy — req.actor ga joriy aktyorni yozadi */
+/** The token is required — writes the current actor to req.actor */
 const authRequired = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -58,7 +58,7 @@ const authRequired = asyncHandler(async (req, res, next) => {
   next();
 });
 
-/** Faqat administrator uchun */
+/** Administrators only */
 function adminOnly(req, res, next) {
   if (!req.actor) return next(new AppError(401, 'Awtorizasiýa talap edilýär.'));
   if (req.actor.type !== 'admin') {
@@ -67,7 +67,7 @@ function adminOnly(req, res, next) {
   next();
 }
 
-/** Audit yozuvi uchun aktyor maydonlari */
+/** Actor fields for an audit record */
 function actorFields(actor) {
   return actor.type === 'admin'
     ? { userId: actor.id, employeeId: null }

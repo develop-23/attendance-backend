@@ -1,46 +1,46 @@
 /**
- * Ma'lumotlar bazasi tarmoq bo'yicha yetib boradigan holga kelguncha kutadi.
+ * Waits until the database becomes reachable over the network.
  *
- * Nima uchun kerak: Railway'ning ichki tarmog'i (`*.railway.internal`) konteyner
- * ishga tushgandan bir necha yuz millisekund keyin tayyor bo'ladi. Agar
- * `prisma migrate deploy` shu ondayoq ishga tushsa, u `P1001: Can't reach
- * database server` xatosi bilan yiqiladi va konteyner qayta ishga tushish
- * sikliga (crash loop) tushib qoladi.
+ * Why this is needed: Railway's internal network (`*.railway.internal`) only
+ * becomes ready a few hundred milliseconds after the container starts. If
+ * `prisma migrate deploy` runs at that very moment it fails with
+ * `P1001: Can't reach database server` and the container ends up in a
+ * restart (crash) loop.
  *
- * Sozlash (ixtiyoriy):
- *   DB_WAIT_ATTEMPTS   — urinishlar soni (standart 20)
- *   DB_WAIT_DELAY_MS   — urinishlar orasidagi kutish (standart 1500 ms)
- *   DB_WAIT_TIMEOUT_MS — bitta urinish uchun timeout (standart 3000 ms)
+ * Configuration (optional):
+ *   DB_WAIT_ATTEMPTS   — number of attempts (default 20)
+ *   DB_WAIT_DELAY_MS   — wait between attempts (default 1500 ms)
+ *   DB_WAIT_TIMEOUT_MS — timeout for a single attempt (default 3000 ms)
  */
 const net = require('net');
 
 try {
   require('dotenv').config();
 } catch {
-  /* dotenv bo'lmasa ham davom etamiz */
+  /* carry on even without dotenv */
 }
 
 const ATTEMPTS = Number(process.env.DB_WAIT_ATTEMPTS || 20);
 const DELAY_MS = Number(process.env.DB_WAIT_DELAY_MS || 1500);
 const TIMEOUT_MS = Number(process.env.DB_WAIT_TIMEOUT_MS || 3000);
 
-/** DATABASE_URL dan host va portni ajratib oladi. SQLite bo'lsa null qaytaradi. */
+/** Extracts the host and port from DATABASE_URL. Returns null for SQLite. */
 function parseTarget(url) {
   if (!url) return null;
-  if (url.startsWith('file:')) return null; // SQLite — tarmoq kerak emas
+  if (url.startsWith('file:')) return null; // SQLite — no network needed
 
   try {
     const u = new URL(url);
     return { host: u.hostname, port: Number(u.port) || 5432 };
   } catch {
-    // Parol ichida maxsus belgilar bo'lsa URL parser yiqilishi mumkin — zaxira usul
+    // The URL parser can fail if the password contains special characters — fallback
     const m = url.match(/@([^/:?]+)(?::(\d+))?/);
     if (!m) return null;
     return { host: m[1], port: Number(m[2]) || 5432 };
   }
 }
 
-/** Bitta TCP ulanish urinishi */
+/** A single TCP connection attempt */
 function tryConnect({ host, port }) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
@@ -65,19 +65,19 @@ async function main() {
   const target = parseTarget(process.env.DATABASE_URL);
 
   if (!target) {
-    console.log('ℹ  Tarmoq orqali ulanish kerak emas (SQLite) — kutish o\'tkazib yuborildi.');
+    console.log('ℹ  No network connection needed (SQLite) — waiting was skipped.');
     return;
   }
 
   for (let i = 1; i <= ATTEMPTS; i++) {
     if (await tryConnect(target)) {
-      console.log(`✔ Baza yetib bo'ladigan holatda: ${target.host}:${target.port} (${i}-urinish)`);
+      console.log(`✔ The database is reachable: ${target.host}:${target.port} (attempt ${i})`);
       return;
     }
     if (i < ATTEMPTS) {
       console.log(
-        `…  ${target.host}:${target.port} hali javob bermayapti (${i}/${ATTEMPTS}), ` +
-          `${DELAY_MS} ms kutilyapti…`
+        `…  ${target.host}:${target.port} is not answering yet (${i}/${ATTEMPTS}), ` +
+          `waiting ${DELAY_MS} ms…`
       );
       await sleep(DELAY_MS);
     }
@@ -86,19 +86,19 @@ async function main() {
   console.error(
     [
       '',
-      `✖ ${target.host}:${target.port} manziliga ${ATTEMPTS} urinishdan keyin ham ulanib bo'lmadi.`,
+      `✖ Could not connect to ${target.host}:${target.port} even after ${ATTEMPTS} attempts.`,
       '',
-      '  Tekshiring:',
-      '   1) Railway’da PostgreSQL xizmati ishlab turibdimi? (yashil "Active" holati)',
-      '   2) DATABASE_URL to‘g‘ri xizmatga bog‘langanmi?',
-      `      Hozirgi manzil: ${target.host}:${target.port}`,
-      '   3) `*.railway.internal` manzili faqat Railway ICHIDAN ishlaydi.',
-      '      Lokal mashinadan ulanmoqchi bo‘lsangiz DATABASE_PUBLIC_URL ni ishlating.',
-      '   4) Ichki tarmoq baribir ishlamasa, vaqtincha public manzilga o‘ting:',
+      '  Check the following:',
+      '   1) Is the PostgreSQL service on Railway running? (a green "Active" status)',
+      '   2) Is DATABASE_URL linked to the right service?',
+      `      Current address: ${target.host}:${target.port}`,
+      '   3) The `*.railway.internal` address only works from INSIDE Railway.',
+      '      To connect from a local machine use DATABASE_PUBLIC_URL.',
+      '   4) If the internal network still does not work, switch to the public address for now:',
       '         DATABASE_URL = ${{Postgres.DATABASE_PUBLIC_URL}}',
-      '      (Postgres xizmatida Settings → Networking → Public Networking yoqilgan bo‘lsin)',
+      '      (make sure Settings → Networking → Public Networking is enabled on the Postgres service)',
       '',
-      '  Kutish vaqtini uzaytirish: DB_WAIT_ATTEMPTS va DB_WAIT_DELAY_MS o‘zgaruvchilari.',
+      '  To wait longer: the DB_WAIT_ATTEMPTS and DB_WAIT_DELAY_MS variables.',
       '',
     ].join('\n')
   );
@@ -106,6 +106,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error('✖ wait-for-db kutilmagan xato:', e.message);
+  console.error('✖ wait-for-db unexpected error:', e.message);
   process.exit(1);
 });

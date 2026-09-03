@@ -1,4 +1,4 @@
-// /api/reports — oylik hisobot va XLSX eksport
+// /api/reports — monthly report and XLSX export
 const express = require('express');
 const ExcelJS = require('exceljs');
 const { asyncHandler } = require('../middleware/error');
@@ -15,21 +15,21 @@ const {
 const router = express.Router();
 router.use(authRequired);
 
-// Turkman tilidagi oy nomlari va hafta kunlari
+// Month names and weekdays in Turkmen
 const MONTHS_TK = [
   'Ýanwar', 'Fewral', 'Mart', 'Aprel', 'Maý', 'Iýun',
   'Iýul', 'Awgust', 'Sentýabr', 'Oktýabr', 'Noýabr', 'Dekabr',
 ];
 const WEEKDAYS_TK = ['Du', 'Si', 'Ça', 'Pe', 'An', 'Şe', 'Ýe'];
 
-/** Xodim faqat o'z ma'lumotlarini oladi */
+/** An employee only gets their own data */
 function scopeFor(req) {
   return req.actor.type === 'employee'
     ? { employeeId: req.actor.id }
     : { includeInactive: req.query.includeInactive !== 'false' };
 }
 
-/** Bir kundagi seanslarni "09:00 - 12:00\n13:00 - 18:00" ko'rinishida */
+/** Formats a day's sessions as "09:00 - 12:00\n13:00 - 18:00" */
 function formatDayCell(day) {
   if (!day || day.sessions.length === 0) return '';
   return day.sessions.map((s) => `${s.checkIn} - ${s.checkOut || '…'}`).join('\n');
@@ -76,7 +76,7 @@ router.get(
       right: { style: 'thin', color: { argb } },
     });
 
-    // ── 1-varaq: kunlik jadval ──────────────────────────────────────
+    // ── Sheet 1: daily table ────────────────────────────────────────
     const ws = wb.addWorksheet(`${MONTHS_TK[month - 1]} ${year}`, {
       views: [{ state: 'frozen', xSplit: 2, ySplit: 2 }],
       pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
@@ -107,7 +107,7 @@ router.get(
       ws.addRow(row);
     }
 
-    // Sarlavha uslubi
+    // Header style
     [1, 2].forEach((i) => {
       const r = ws.getRow(i);
       r.font = { bold: true, size: 10 };
@@ -118,7 +118,7 @@ router.get(
       });
     });
 
-    // Ma'lumot kataklari + ranglar
+    // Data cells + colors
     ws.eachRow((row, rowNumber) => {
       if (rowNumber <= 2) return;
       const emp = employees[rowNumber - 3];
@@ -128,7 +128,7 @@ router.get(
           cell.alignment = { horizontal: 'left', vertical: 'middle' };
           return;
         }
-        // Bir katakda bir nechta seans bo'lishi mumkin — matn qatorlarga bo'linadi
+        // A cell may hold several sessions — the text is split across lines
         cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         cell.font = { size: 8 };
 
@@ -140,13 +140,13 @@ router.get(
 
         let color = null;
         if (day && isLate(day.firstCheckIn, settings)) {
-          color = 'FFFDE0E0'; // kechikkan
+          color = 'FFFDE0E0'; // late
         } else if (day && !day.hasOpen) {
-          color = 'FFE3F6E5'; // to'liq
+          color = 'FFE3F6E5'; // complete
         } else if (day && day.hasOpen) {
-          color = 'FFFFF4DB'; // tugallanmagan
+          color = 'FFFFF4DB'; // unfinished
         } else if (d.isWeekend) {
-          color = 'FFF1F1F4'; // dam olish kuni
+          color = 'FFF1F1F4'; // weekend day
         }
         if (color) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: color } };
       });
@@ -157,7 +157,7 @@ router.get(
     for (let i = 0; i < days.length; i++) ws.getColumn(3 + i).width = 13;
     [3, 4, 5].forEach((o) => (ws.getColumn(days.length + o).width = 12));
 
-    // ── 2-varaq: umumiy hisobot ─────────────────────────────────────
+    // ── Sheet 2: summary report ─────────────────────────────────────
     const ws2 = wb.addWorksheet('Hasabat');
     ws2.addRow([`${MONTHS_TK[month - 1]} ${year} — aýlyk hasabat`]);
     ws2.addRow([
@@ -183,8 +183,8 @@ router.get(
     ws2.getColumn(2).width = 18;
     [3, 4, 5, 6, 7, 8].forEach((c) => (ws2.getColumn(c).width = 14));
 
-    // ── 3-varaq: har bir seans alohida qator ────────────────────────
-    // Bir kunda bir nechta kelish-ketish bo'lgani uchun batafsil ro'yxat foydali
+    // ── Sheet 3: one row per session ────────────────────────────────
+    // Since a day can hold several check-ins/check-outs, a detailed list helps
     const ws3 = wb.addWorksheet('Jikme-jik');
     ws3.addRow(['Ady', 'Sene', 'Gün', 'Geldi', 'Gitdi', 'Dowamlylygy', 'Bellik']);
     ws3.getRow(1).font = { bold: true };
@@ -197,8 +197,8 @@ router.get(
       const emp = empMap.get(r.employeeId);
       if (!emp) continue;
       const d = dayMap.get(r.date);
-      // Ochiq seans ham hisoblanadi (joriy vaqtgacha) — eksport qilingan
-      // paytdagi holatni ko'rsatadi
+      // Open sessions are counted too (up to the current time) — this shows
+      // the state at the moment of the export
       const mins = workedMinutes(r.checkIn, r.checkOut, { date: r.date, now });
       ws3.addRow([
         emp.fullName,
@@ -217,7 +217,7 @@ router.get(
     [4, 5, 6].forEach((c) => (ws3.getColumn(c).width = 12));
     ws3.getColumn(7).width = 32;
 
-    // ── Faylni yuborish ─────────────────────────────────────────────
+    // ── Send the file ───────────────────────────────────────────────
     const fileName = `gatnasyk-${year}-${String(month).padStart(2, '0')}.xlsx`;
     res.setHeader(
       'Content-Type',

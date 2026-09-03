@@ -1,10 +1,10 @@
-// O'zgarishlarni AuditLog jadvaliga yozish
+// Write changes to the AuditLog table
 const prisma = require('../prisma');
 const { actorFields } = require('../middleware/auth');
 
 /**
  * @param {object} p
- * @param {{type:'admin'|'employee', id:number}} p.actor - amalni bajargan aktyor
+ * @param {{type:'admin'|'employee', id:number}} p.actor - the actor that performed the action
  * @param {string} p.action    - create | update | delete | login | change-password
  * @param {string} p.entity    - Employee | Attendance | User | Settings
  * @param {string|number|null} p.entityId
@@ -24,7 +24,7 @@ async function writeAudit({ actor, action, entity, entityId, oldValue, newValue 
       },
     });
   } catch (e) {
-    // Audit yozuvi asosiy amalni to'xtatmasligi kerak
+    // An audit record must never break the main operation
     console.error('[AUDIT ERROR]', e.message);
   }
 }

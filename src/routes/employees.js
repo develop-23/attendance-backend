@@ -1,6 +1,6 @@
-// /api/employees — xodimlar boshqaruvi (faqat admin).
-// Har bir xodimning o'z login/paroli bor — u bilan tizimga kirib
-// o'z kelish-ketish vaqtlarini kiritadi.
+// /api/employees — employee management (admin only).
+// Every employee has their own login/password — they use it to sign in and
+// enter their own check-in/check-out times.
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const prisma = require('../prisma');
@@ -13,7 +13,7 @@ const { assertLoginAvailable } = require('../utils/accounts');
 const router = express.Router();
 router.use(authRequired);
 
-// Parol xeshi hech qachon qaytarilmasligi uchun
+// So the password hash is never returned
 const publicFields = {
   id: true,
   login: true,
@@ -23,14 +23,14 @@ const publicFields = {
   createdAt: true,
 };
 
-// Ro'yxat uchun: har bir xodimning nechta davomat yozuvi borligi ham qaytadi.
-// Bu butunlay o'chirishdan oldin ogohlantirish ko'rsatish uchun kerak.
+// For the list: the number of attendance records per employee is returned too.
+// This is needed to show a warning before a permanent deletion.
 const publicFieldsWithCount = {
   ...publicFields,
   _count: { select: { attendances: true } },
 };
 
-/** Prisma'ning _count ni oddiy `attendanceCount` maydoniga aylantiradi */
+/** Turns Prisma's _count into a plain `attendanceCount` field */
 function withCount(employee) {
   if (!employee) return employee;
   const { _count, ...rest } = employee;
@@ -38,7 +38,7 @@ function withCount(employee) {
 }
 
 // GET /api/employees?search=&includeInactive=true
-// Xodim ham chaqira oladi, lekin faqat o'zini ko'radi.
+// An employee can call this too, but only sees themselves.
 router.get(
   '/',
   asyncHandler(async (req, res) => {
@@ -56,7 +56,7 @@ router.get(
     const where = {};
     if (!showInactive) where.isActive = true;
     if (search && String(search).trim()) {
-      // SQLite'da `mode: insensitive` qo'llab-quvvatlanmaydi, shu sabab oddiy `contains`
+      // SQLite does not support `mode: insensitive`, hence the plain `contains`
       where.fullName = { contains: String(search).trim() };
     }
 
@@ -70,7 +70,7 @@ router.get(
   })
 );
 
-// POST /api/employees  (faqat admin)
+// POST /api/employees  (admin only)
 router.post(
   '/',
   adminOnly,
@@ -101,7 +101,7 @@ router.post(
   })
 );
 
-// PUT /api/employees/:id  (faqat admin) — parolni ham tiklashi mumkin
+// PUT /api/employees/:id  (admin only) — can also reset the password
 router.put(
   '/:id',
   adminOnly,
@@ -138,13 +138,13 @@ router.put(
   })
 );
 
-// DELETE /api/employees/:id                 → arxivga (soft delete)
-// DELETE /api/employees/:id?permanent=true   → BUTUNLAY o'chirish
+// DELETE /api/employees/:id                 → to the archive (soft delete)
+// DELETE /api/employees/:id?permanent=true   → PERMANENT deletion
 //
-// ⚠ Butunlay o'chirishda xodimning BARCHA davomat yozuvlari ham o'chadi
-// (schema.prisma: Attendance.employee → onDelete: Cascade). Bu amalni
-// qaytarib bo'lmaydi, shuning uchun o'tgan oylardagi hisobotlar ham o'zgaradi.
-// AuditLog'da esa nima o'chirilgani (ism, login, yozuvlar soni) saqlanib qoladi.
+// ⚠ A permanent deletion also removes ALL of the employee's attendance records
+// (schema.prisma: Attendance.employee → onDelete: Cascade). This cannot be
+// undone, so the reports of previous months change as well.
+// The AuditLog keeps a record of what was deleted (name, login, record count).
 router.delete(
   '/:id',
   adminOnly,
@@ -162,7 +162,7 @@ router.delete(
 
     const employee = withCount(old);
 
-    // ── Butunlay o'chirish ──────────────────────────────────────────
+    // ── Permanent deletion ──────────────────────────────────────────
     if (permanent) {
       await prisma.employee.delete({ where: { id } });
 
@@ -171,7 +171,7 @@ router.delete(
         action: 'delete',
         entity: 'Employee',
         entityId: id,
-        oldValue: employee, // yozuvlar soni bilan birga saqlanadi
+        oldValue: employee, // stored together with the record count
       });
 
       return res.json({
@@ -184,7 +184,7 @@ router.delete(
       });
     }
 
-    // ── Arxivga o'tkazish ───────────────────────────────────────────
+    // ── Move to the archive ─────────────────────────────────────────
     if (!old.isActive) throw new AppError(400, 'Bu işgär eýýäm işjeň däl.');
 
     const updated = await prisma.employee.update({

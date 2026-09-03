@@ -1,12 +1,12 @@
-// Kirish ma'lumotlarini tekshirish (zod) — xato matnlari turkman tilida
+// Input validation (zod) — the error texts are in Turkmen
 const { z } = require('zod');
 const { AppError } = require('../middleware/error');
 
 const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/; // HH:MM
 const dateRegex = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/; // YYYY-MM-DD
 
-// Majburiy maydon yuborilmasa ham xato matni turkman tilida bo'lishi uchun
-// har bir maydonga `required_error` beriladi (aks holda zod inglizcha "Required" qaytaradi).
+// So that the error text stays in Turkmen even when a required field is missing,
+// every field gets a `required_error` (otherwise zod returns the English "Required").
 const req = (message) => ({ required_error: message, invalid_type_error: message });
 
 const timeField = z
@@ -17,10 +17,10 @@ const dateField = z
   .string(req('Sene giriziň'))
   .regex(dateRegex, 'Sene "ÝÝÝÝ-AA-GG" görnüşinde bolmaly (mysal: 2026-09-01)');
 
-// Bo'sh matnni null ga aylantiruvchi yordamchi.
-// MUHIM: undefined (maydon umuman yuborilmagan) null ga AYLANTIRILMAYDI —
-// aks holda qisman tahrirlashda (PATCH-uslub) yuborilmagan maydonlar
-// o'chib ketardi. undefined = "tegmang", null/'' = "tozalang".
+// Helper that turns an empty string into null.
+// IMPORTANT: undefined (the field was not sent at all) is NOT turned into null —
+// otherwise a partial (PATCH-style) edit would wipe the fields that were not
+// sent. undefined = "leave it alone", null/'' = "clear it".
 const emptyToNull = (v) => (v === '' ? null : v);
 
 const loginField = z
@@ -51,7 +51,7 @@ const schemas = {
     newPassword: passwordField,
   }),
 
-  // ── Xodimlar ──────────────────────────────────────────────────────
+  // ── Employees ─────────────────────────────────────────────────────
   employeeCreate: z.object({
     login: loginField,
     password: passwordField,
@@ -67,9 +67,9 @@ const schemas = {
     password: z.preprocess(emptyToNull, passwordField.nullable().optional()),
   }),
 
-  // ── Davomat seansi ────────────────────────────────────────────────
-  // Bir kunda bir nechta seans bo'lishi mumkin, shuning uchun har biri
-  // alohida yozuv sifatida yaratiladi/tahrirlanadi.
+  // ── Attendance session ────────────────────────────────────────────
+  // A day may hold several sessions, so each one is created/edited as a
+  // separate record.
   attendanceCreate: z.object({
     employeeId: z.coerce.number().int().positive('Işgär saýlanmady').optional(),
     date: dateField,
@@ -84,7 +84,7 @@ const schemas = {
     note: z.preprocess(emptyToNull, z.string().trim().max(300).nullable().optional()),
   }),
 
-  // ── Administratorlar ──────────────────────────────────────────────
+  // ── Administrators ────────────────────────────────────────────────
   userCreate: z.object({
     login: loginField,
     password: passwordField,
@@ -97,7 +97,7 @@ const schemas = {
     password: z.preprocess(emptyToNull, passwordField.nullable().optional()),
   }),
 
-  // ── Sozlamalar ────────────────────────────────────────────────────
+  // ── Settings ──────────────────────────────────────────────────────
   settingsUpdate: z.object({
     workStart: timeField.optional(),
     workEnd: timeField.optional(),
@@ -120,7 +120,7 @@ const schemas = {
   }),
 };
 
-/** Ma'lumotni tekshiradi, xato bo'lsa 400 bilan AppError otadi */
+/** Validates the data and throws an AppError with status 400 on failure */
 function validate(schema, data) {
   const result = schema.safeParse(data);
   if (!result.success) {

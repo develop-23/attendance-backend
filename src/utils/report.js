@@ -1,16 +1,16 @@
-// Davomat hisob-kitoblari.
-// Bir kunda bir nechta kelish-ketish seansi bo'lishi mumkin, shuning uchun
-// kunlik jami = o'sha kundagi barcha seanslar yig'indisi.
+// Attendance calculations.
+// A day may contain several check-in/check-out sessions, so the daily total is
+// the sum of all of that day's sessions.
 const prisma = require('../prisma');
 
-/** "HH:MM" ni yarim tundan boshlab minutga aylantiradi */
+/** Converts "HH:MM" into minutes since midnight */
 function timeToMinutes(t) {
   if (!t) return null;
   const [h, m] = t.split(':').map(Number);
   return h * 60 + m;
 }
 
-/** Minutni "HH:MM" ko'rinishiga qaytaradi (24 soatdan oshsa ham) */
+/** Converts minutes back into "HH:MM" (even beyond 24 hours) */
 function minutesToTime(min) {
   const total = Math.round(min);
   const h = Math.floor(total / 60);
@@ -18,24 +18,24 @@ function minutesToTime(min) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-/** Berilgan oydagi kunlar soni */
+/** Number of days in the given month */
 function daysInMonth(year, month) {
   return new Date(year, month, 0).getDate();
 }
 
-/** YYYY-MM-DD qatorini yasaydi */
+/** Builds a YYYY-MM-DD string */
 function toDateStr(year, month, day) {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-/** Ertangi kun: "2026-09-01" -> "2026-09-02" */
+/** Next day: "2026-09-01" -> "2026-09-02" */
 function nextDay(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(y, m - 1, d + 1);
   return toDateStr(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
 }
 
-/** Server vaqtidagi "hozir": { date: "YYYY-MM-DD", time: "HH:MM" } */
+/** "Now" in server time: { date: "YYYY-MM-DD", time: "HH:MM" } */
 function nowParts() {
   const d = new Date();
   return {
@@ -45,9 +45,9 @@ function nowParts() {
 }
 
 /**
- * (sana, vaqt) juftligi hozirgi vaqtdan keyinmi?
- * Matnli taqqoslash ishlatiladi — "YYYY-MM-DD" ham, "HH:MM" ham leksikografik
- * tartibda xronologik tartib bilan bir xil.
+ * Is the (date, time) pair later than the current moment?
+ * String comparison is used — for both "YYYY-MM-DD" and "HH:MM" lexicographic
+ * order matches chronological order.
  */
 function isFutureMoment(date, time, now = nowParts()) {
   if (date > now.date) return true;
@@ -55,28 +55,28 @@ function isFutureMoment(date, time, now = nowParts()) {
   return time > now.time;
 }
 
-/** ISO hafta kuni: 1 = Dushanba ... 7 = Yakshanba */
+/** ISO weekday: 1 = Monday ... 7 = Sunday */
 function isoWeekday(year, month, day) {
-  const wd = new Date(year, month - 1, day).getDay(); // 0 = Yakshanba
+  const wd = new Date(year, month - 1, day).getDay(); // 0 = Sunday
   return wd === 0 ? 7 : wd;
 }
 
-/** Ochiq seans uchun eng ko'p hisoblanadigan vaqt (24 soat) */
+/** Maximum time counted for an open session (24 hours) */
 const OPEN_SESSION_MAX_MINUTES = 24 * 60;
 
 /**
- * Bitta seansda ishlangan vaqt (minut).
+ * Time worked in a single session (minutes).
  *
- * - "Gitdi" yozilgan bo'lsa — oddiy ayirma (tungi smena hisobga olinadi).
- * - "Gitdi" hali yozilmagan bo'lsa — JORIY VAQTgacha hisoblanadi, ya'ni
- *   xodim hozir ishlab turgan bo'lsa ham soati ko'rinadi.
+ * - If "Gitdi" is recorded — a plain difference (night shifts are handled).
+ * - If "Gitdi" is not recorded yet — counted up to the CURRENT TIME, so the
+ *   hours are visible even while the employee is still working.
  *
- * 24 soat chegarasi: kimdir "Gitdi" ni yozishni unutib qo'ysa, o'tgan
- * haftadagi ochiq seans 200+ soatga aylanib hisobotlarni buzib yuborardi.
+ * The 24-hour cap: if somebody forgets to record "Gitdi", an open session from
+ * last week would turn into 200+ hours and wreck the reports.
  *
- * ⚠ Server vaqt mintaqasi muhim: `TZ` o'zgaruvchisi qo'yilmasa, Railway
- * UTC'da ishlaydi va ochiq seanslar noto'g'ri (odatda 0) hisoblanadi.
- * .env.example ga qarang.
+ * ⚠ The server time zone matters: if the `TZ` variable is not set, Railway runs
+ * in UTC and open sessions are counted incorrectly (usually as 0).
+ * See .env.example.
  *
  * @param {string} checkIn
  * @param {string|null} checkOut
@@ -86,16 +86,16 @@ function workedMinutes(checkIn, checkOut, options = {}) {
   const inM = timeToMinutes(checkIn);
   if (inM == null) return 0;
 
-  // Tugallangan seans
+  // Completed session
   if (checkOut) {
     const outM = timeToMinutes(checkOut);
     if (outM == null) return 0;
     let diff = outM - inM;
-    if (diff < 0) diff += 24 * 60; // tungi smena
+    if (diff < 0) diff += 24 * 60; // night shift
     return diff;
   }
 
-  // Ochiq seans — joriy vaqtgacha
+  // Open session — up to the current time
   const { date, now } = options;
   if (!date || now == null) return 0;
 
@@ -110,9 +110,9 @@ function workedMinutes(checkIn, checkOut, options = {}) {
 }
 
 /**
- * Seansni [boshlanish, tugash] minut oralig'iga aylantiradi.
- * Tungi smena bo'lsa tugash 24 soatdan oshadi (masalan 22:00→06:00 = [1320, 1800]).
- * Hali tugamagan seans nuqta sifatida qaraladi.
+ * Converts a session into a [start, end] range in minutes.
+ * For a night shift the end goes past 24 hours (e.g. 22:00→06:00 = [1320, 1800]).
+ * A session that has not finished yet is treated as a single point.
  */
 function toInterval(checkIn, checkOut) {
   const start = timeToMinutes(checkIn);
@@ -123,20 +123,20 @@ function toInterval(checkIn, checkOut) {
   return [start, end];
 }
 
-/** Ikki seans vaqt bo'yicha kesishadimi? */
+/** Do the two sessions overlap in time? */
 function intervalsOverlap(a, b) {
   if (!a || !b) return false;
   return a[0] < b[1] && b[0] < a[1];
 }
 
-/** Kechikkanmi? (kunning ENG ERTA kelishi bo'yicha aniqlanadi) */
+/** Is it late? (decided by the EARLIEST check-in of the day) */
 function isLate(checkIn, settings) {
   if (!checkIn) return false;
   const limit = timeToMinutes(settings.workStart) + (settings.lateThresholdMin || 0);
   return timeToMinutes(checkIn) > limit;
 }
 
-/** weekendDays matnini massivga aylantiradi: "6,7" -> [6,7] */
+/** Turns the weekendDays string into an array: "6,7" -> [6,7] */
 function parseWeekendDays(str) {
   if (!str) return [];
   return str
@@ -145,7 +145,7 @@ function parseWeekendDays(str) {
     .filter((n) => !Number.isNaN(n) && n >= 1 && n <= 7);
 }
 
-/** Sozlamalarni oladi (yo'q bo'lsa yaratadi) */
+/** Reads the settings (creating them if they do not exist) */
 async function getSettings() {
   let s = await prisma.settings.findUnique({ where: { id: 1 } });
   if (!s) s = await prisma.settings.create({ data: { id: 1 } });
@@ -159,9 +159,9 @@ async function getSettings() {
 }
 
 /**
- * Seanslarni kunlar bo'yicha guruhlab, kunlik yig'indini hisoblaydi.
+ * Groups the sessions by day and computes the daily totals.
  * @param {Array} records
- * @param {number} [now] - ochiq seanslarni hisoblash uchun (Date.now())
+ * @param {number} [now] - used to count open sessions (Date.now())
  * @returns Map<"employeeId|date", {sessions, minutes, firstCheckIn, hasOpen}>
  */
 function groupByDay(records, now = Date.now()) {
@@ -178,7 +178,7 @@ function groupByDay(records, now = Date.now()) {
     if (!r.checkOut) day.hasOpen = true;
     if (!day.firstCheckIn || r.checkIn < day.firstCheckIn) day.firstCheckIn = r.checkIn;
   }
-  // Har bir kun ichidagi seanslar vaqt bo'yicha tartiblanadi
+  // The sessions within each day are sorted by time
   for (const day of map.values()) {
     day.sessions.sort((a, b) => a.checkIn.localeCompare(b.checkIn));
   }
@@ -186,11 +186,11 @@ function groupByDay(records, now = Date.now()) {
 }
 
 /**
- * Oylik hisobot.
+ * Monthly report.
  * @param {number} year
  * @param {number} month
  * @param {{employeeId?: number, includeInactive?: boolean}} opts
- *        employeeId berilsa — faqat o'sha xodim (xodimning shaxsiy sahifasi uchun)
+ *        if employeeId is given — only that employee (for the employee's own page)
  */
 async function buildMonthlyReport(year, month, { employeeId, includeInactive = true } = {}) {
   const total = daysInMonth(year, month);
@@ -226,7 +226,7 @@ async function buildMonthlyReport(year, month, { employeeId, includeInactive = t
     },
   });
 
-  // Kunlar ro'yxati (jadval ustunlari uchun)
+  // List of days (for the table columns)
   const days = [];
   for (let d = 1; d <= total; d++) {
     const weekday = isoWeekday(year, month, d);
@@ -241,7 +241,7 @@ async function buildMonthlyReport(year, month, { employeeId, includeInactive = t
   const now = Date.now();
   const byDay = groupByDay(records, now);
 
-  // Har bir xodim bo'yicha yig'indi
+  // Totals per employee
   const summary = employees.map((emp) => {
     let totalMinutes = 0;
     let workedDays = 0;
@@ -255,7 +255,7 @@ async function buildMonthlyReport(year, month, { employeeId, includeInactive = t
       totalMinutes += day.minutes;
       sessionCount += day.sessions.length;
       workedDays += 1;
-      // Kechikish kuniga bir marta — eng erta kelish bo'yicha
+      // Lateness counts once per day — based on the earliest check-in
       if (isLate(day.firstCheckIn, settings)) lateCount += 1;
       if (day.hasOpen) incompleteDays += 1;
     }

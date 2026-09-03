@@ -1,5 +1,5 @@
-// /api/auth — kirish, joriy aktyor, parolni o'zgartirish
-// Admin ham, xodim ham bitta endpoint orqali kiradi.
+// /api/auth — sign in, current actor, change password
+// Both admins and employees sign in through the same endpoint.
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -11,7 +11,7 @@ const { writeAudit } = require('../utils/audit');
 
 const router = express.Router();
 
-/** Token yaratish */
+/** Create a token */
 function signToken({ id, login, type }) {
   return jwt.sign({ sub: id, login, type }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || '8h',
@@ -24,13 +24,13 @@ router.post(
   asyncHandler(async (req, res) => {
     const { login, password } = validate(schemas.login, req.body);
 
-    // Avval administratorlar, so'ng xodimlar orasidan qidiramiz
+    // Look among the administrators first, then among the employees
     const user = await prisma.user.findUnique({ where: { login } });
     const employee = user ? null : await prisma.employee.findUnique({ where: { login } });
     const account = user || employee;
     const type = user ? 'admin' : 'employee';
 
-    // Xavfsizlik: login yoki parol xato ekanini ajratib ko'rsatmaymiz
+    // Security: we do not reveal whether it was the login or the password that was wrong
     if (!account || !(await bcrypt.compare(password, account.passwordHash))) {
       throw new AppError(401, 'Ulanyjy ady ýa-da açar sözi nädogry.');
     }
@@ -70,7 +70,7 @@ router.get(
   })
 );
 
-// POST /api/auth/change-password — admin ham, xodim ham o'z parolini almashtiradi
+// POST /api/auth/change-password — both admins and employees change their own password
 router.post(
   '/change-password',
   authRequired,

@@ -1,4 +1,4 @@
-// Server kirish nuqtasi — Express ilovasi
+// Server entry point — the Express application
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -12,13 +12,13 @@ const reportRoutes = require('./routes/reports');
 const userRoutes = require('./routes/users');
 const settingsRoutes = require('./routes/settings');
 
-// JWT_SECRET bo'lmasa ishga tushirmaymiz — bu jiddiy xavfsizlik masalasi
+// Refuse to start without JWT_SECRET — this is a serious security issue
 if (!process.env.JWT_SECRET) {
-  console.error('✖ JWT_SECRET aniqlanmagan. .env faylini yarating (.env.example dan nusxa oling).');
+  console.error('✖ JWT_SECRET is not set. Create a .env file (copy it from .env.example).');
   process.exit(1);
 }
 if (!process.env.DATABASE_URL) {
-  console.error('✖ DATABASE_URL aniqlanmagan. .env faylini tekshiring.');
+  console.error('✖ DATABASE_URL is not set. Check your .env file.');
   process.exit(1);
 }
 
@@ -26,21 +26,21 @@ const app = express();
 const PORT = Number(process.env.PORT) || 4000;
 
 // ── CORS ──────────────────────────────────────────────────────────────
-// Bir nechta manzilni vergul bilan ajratib yozish mumkin.
-// `*` belgisi qo'llab-quvvatlanadi — Vercel'ning oldindan ko'rish (preview)
-// deploylari har safar yangi manzil oladi, masalan:
+// Several addresses can be listed separated by commas.
+// The `*` wildcard is supported — Vercel preview deployments get a new
+// address every time, for example:
 //   CORS_ORIGIN="https://davomat.vercel.app,https://*.vercel.app"
 const origins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
 
-/** Maxsus belgilarni qochirish (regexp uchun) */
+/** Escape special characters (for the regexp) */
 const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Berilgan manzilga ruxsat bormi? */
+/** Is the given origin allowed? */
 function isOriginAllowed(origin) {
-  // Origin yo'q = brauzerdan kelmagan so'rov (curl, sog'liq tekshiruvi) — ruxsat
+  // No origin = the request did not come from a browser (curl, health check) — allow it
   if (!origin) return true;
   if (origins.includes('*')) return true;
 
@@ -54,21 +54,21 @@ function isOriginAllowed(origin) {
 
 app.use(
   cors({
-    // Xato o'rniga `false` qaytaramiz — shunda 500 emas, brauzer o'zi bloklaydi
+    // Return `false` instead of an error — then the browser blocks it rather than a 500
     origin: (origin, callback) => callback(null, isOriginAllowed(origin)),
   })
 );
 
-// Railway/Vercel kabi proksi ortida ishlaganda haqiqiy IP va protokolni bilish uchun
+// So the real IP and protocol are known when running behind a proxy such as Railway/Vercel
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '1mb' }));
 
-// Holatni tekshirish
+// Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-// Marshrutlar
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/attendance', attendanceRoutes);
@@ -76,27 +76,27 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/settings', settingsRoutes);
 
-// Xatolar
+// Errors
 app.use(notFound);
 app.use(errorHandler);
 
-// Host berilmasa Node `::` ga bog'lanadi — bu Railway uchun to'g'ri
-// (ham IPv4, ham IPv6 so'rovlarni qabul qiladi).
+// With no host given Node binds to `::` — which is what Railway needs
+// (it accepts both IPv4 and IPv6 requests).
 app.listen(PORT, () => {
-  console.log(`✔ Server ishga tushdi: port ${PORT}`);
-  console.log(`  Ruxsat etilgan manzillar (CORS): ${origins.join(', ')}`);
+  console.log(`✔ Server started: port ${PORT}`);
+  console.log(`  Allowed origins (CORS): ${origins.join(', ')}`);
 
-  // Vaqt mintaqasi ikkita narsaga ta'sir qiladi: (1) hali tugallanmagan
-  // seanslarning joriy vaqtgacha hisoblanishi, (2) kelajakdagi vaqtni rad etish.
+  // The time zone affects two things: (1) counting unfinished sessions up to
+  // the current time, (2) rejecting times that lie in the future.
   if (process.env.TZ) {
     const now = new Date();
-    console.log(`  Vaqt mintaqasi (TZ): ${process.env.TZ} — hozir ${now.toLocaleString('en-GB')}`);
+    console.log(`  Time zone (TZ): ${process.env.TZ} — now ${now.toLocaleString('en-GB')}`);
   } else {
     console.warn(
-      '  ⚠ TZ o\'zgaruvchisi qo\'yilmagan — server UTC\'da ishlayapti.\n' +
-        '    • tugallanmagan seanslar noto\'g\'ri hisoblanishi mumkin\n' +
-        '    • kelajakdagi vaqt serverda TEKSHIRILMAYDI (faqat brauzerda)\n' +
-        '    Tuzatish: TZ="Asia/Ashgabat"'
+      '  ⚠ The TZ variable is not set — the server is running in UTC.\n' +
+        '    • unfinished sessions may be counted incorrectly\n' +
+        '    • future times are NOT VALIDATED on the server (only in the browser)\n' +
+        '    Fix: TZ="Asia/Ashgabat"'
     );
   }
 });

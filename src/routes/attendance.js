@@ -1,10 +1,10 @@
-// /api/attendance — kelish-ketish seanslari.
-// Bir xodim bir kunda BIR NECHTA marta kelib-ketishi mumkin, shuning uchun
-// har bir kelish-ketish alohida yozuv (seans) sifatida saqlanadi.
+// /api/attendance — check-in/check-out sessions.
+// An employee may come and go SEVERAL times a day, so every check-in/check-out
+// is stored as a separate record (session).
 //
-// Ruxsatlar:
-//   admin  — barcha xodimlarning yozuvlarini ko'radi va tahrirlaydi
-//   xodim  — faqat O'Z yozuvlarini ko'radi, qo'shadi, tahrirlaydi va o'chiradi
+// Permissions:
+//   admin     — sees and edits the records of every employee
+//   employee  — only sees, adds, edits and deletes THEIR OWN records
 const express = require('express');
 const prisma = require('../prisma');
 const { asyncHandler, AppError } = require('../middleware/error');
@@ -24,22 +24,22 @@ const {
 const router = express.Router();
 router.use(authRequired);
 
-/** Bugungi sana YYYY-MM-DD */
+/** Today's date as YYYY-MM-DD */
 function todayStr() {
   return nowParts().date;
 }
 
-// Kelajakdagi VAQTni serverda tekshirish uchun server soati foydalanuvchi bilan
-// bir vaqt mintaqasida bo'lishi shart. TZ qo'yilmagan bo'lsa (Railway'da
-// standart holat — UTC), server soati foydalanuvchinikidan farq qiladi va
-// to'g'ri yozuvlarni ham rad etib qo'yishi mumkin. Shuning uchun bu tekshiruv
-// faqat TZ aniq berilgan bo'lsa ishlaydi; brauzer tomonida esa doim ishlaydi.
+// To validate a FUTURE TIME on the server, the server clock has to be in the
+// same time zone as the user. If TZ is not set (the default on Railway is UTC)
+// the server clock differs from the user's and valid records could be rejected.
+// That is why this check only runs when TZ is explicitly set; on the browser
+// side it always runs.
 const TIMEZONE_CONFIGURED = Boolean(process.env.TZ);
 
 /**
- * Kelish/ketish vaqti kelajakda emasligini tekshiradi.
- * Tungi smenada (checkOut < checkIn) ketish vaqti ERTANGI kunga tegishli
- * bo'ladi — demak u ham kelajakda bo'lishi mumkin.
+ * Checks that the check-in/check-out time is not in the future.
+ * On a night shift (checkOut < checkIn) the check-out belongs to the NEXT day —
+ * which means it too can lie in the future.
  */
 function assertNotInFuture({ date, checkIn, checkOut }) {
   if (!TIMEZONE_CONFIGURED) return;
@@ -50,7 +50,7 @@ function assertNotInFuture({ date, checkIn, checkOut }) {
   }
 
   if (checkOut) {
-    // checkOut <= checkIn bo'lsa — bu tungi smena, ketish ertangi kunda
+    // checkOut <= checkIn — this is a night shift, the check-out is on the next day
     const overnight = checkIn && checkOut <= checkIn;
     const outDate = overnight ? nextDay(date) : date;
     if (isFutureMoment(outDate, checkOut, now)) {
@@ -64,7 +64,7 @@ function assertNotInFuture({ date, checkIn, checkOut }) {
   }
 }
 
-/** Aktyor shu yozuvni tahrirlay oladimi? */
+/** May this actor edit this record? */
 function assertCanTouch(actor, employeeId) {
   if (actor.type === 'admin') return;
   if (actor.id !== employeeId) {
@@ -73,8 +73,8 @@ function assertCanTouch(actor, employeeId) {
 }
 
 /**
- * Yangi/tahrirlangan seans o'sha kundagi boshqa seanslar bilan kesishmasligini
- * tekshiradi — aks holda bir vaqt ikki marta hisoblanib ketadi.
+ * Checks that the new/edited session does not overlap with the other sessions of
+ * that day — otherwise the same period would be counted twice.
  */
 async function assertNoOverlap({ employeeId, date, checkIn, checkOut, exceptId }) {
   const siblings = await prisma.attendance.findMany({
@@ -93,7 +93,7 @@ async function assertNoOverlap({ employeeId, date, checkIn, checkOut, exceptId }
   }
 }
 
-/** Seansning sanasi va vaqtini umumiy tekshirish */
+/** Common validation of a session's date and time */
 function assertValidDate(date) {
   if (date > todayStr()) {
     throw new AppError(400, 'Geljekki sene üçin maglumat girizip bolmaýar.');
@@ -101,8 +101,8 @@ function assertValidDate(date) {
 }
 
 // ── GET /api/attendance?year=2026&month=9 ─────────────────────────────
-// Butun oy: kunlar, xodimlar, seanslar, sozlamalar va yig'indi.
-// Xodim chaqirsa — faqat o'z ma'lumotlari qaytadi.
+// The whole month: days, employees, sessions, settings and totals.
+// When an employee calls it — only their own data is returned.
 router.get(
   '/',
   asyncHandler(async (req, res) => {
@@ -129,13 +129,13 @@ router.get(
 );
 
 // ── POST /api/attendance ──────────────────────────────────────────────
-// Yangi seans qo'shadi. Xodim uchun employeeId majburiy emas — o'zi hisoblanadi.
+// Adds a new session. For an employee, employeeId is optional — it is inferred.
 router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = validate(schemas.attendanceCreate, req.body);
 
-    // Xodim faqat o'ziga yozadi, admin esa employeeId ni ko'rsatishi shart
+    // An employee only writes for themselves, while an admin must supply employeeId
     let employeeId;
     if (req.actor.type === 'employee') {
       employeeId = req.actor.id;
@@ -194,7 +194,7 @@ router.post(
 );
 
 // ── PUT /api/attendance/:id ───────────────────────────────────────────
-// Mavjud seansni tahrirlaydi.
+// Edits an existing session.
 router.put(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -250,7 +250,7 @@ router.put(
 );
 
 // ── DELETE /api/attendance/:id ────────────────────────────────────────
-// Admin istalgan yozuvni, xodim esa faqat o'z yozuvini o'chira oladi.
+// An admin can delete any record, an employee only their own.
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
